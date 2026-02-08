@@ -6,6 +6,7 @@ Model Evaluator - 基于统一格式的大模型能力评估工具
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
@@ -23,7 +24,43 @@ from model_client import ModelClient
 from utils import load_jsonl, save_jsonl, format_result
 
 
+# 配置日志
+def setup_logging(output_dir: str = "logs") -> logging.Logger:
+    """配置日志记录"""
+    log_dir = Path(output_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    log_file = log_dir / f"eval_{time.strftime('%Y%m%d_%H%M%S')}.log"
+    
+    # 创建 logger
+    logger = logging.getLogger("model_evaluator")
+    logger.setLevel(logging.DEBUG)
+    
+    # 文件处理器 - 记录所有日志
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_format = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler.setFormatter(file_format)
+    
+    # 控制台处理器 - 只记录 INFO 及以上
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_format = logging.Formatter("%(levelname)s: %(message)s")
+    console_handler.setFormatter(console_format)
+    
+    # 添加处理器
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    logger.info(f"日志文件: {log_file}")
+    return logger
+
+
 @dataclass
+class EvalConfig:
 class EvalConfig:
     """评估配置类"""
     model_name: str
@@ -40,18 +77,22 @@ class EvalConfig:
 class ModelEvaluator:
     """模型评估器主类"""
     
-    def __init__(self, config: EvalConfig):
+    def __init__(self, config: EvalConfig, logger: Optional[logging.Logger] = None):
         self.config = config
         self.client = ModelClient(config.model_config, config.timeout)
         self.results: List[Dict] = []
         self.output_path: Optional[Path] = None
         self.results_file: Optional[Path] = None
         self.stats_file: Optional[Path] = None
+        self.logger = logger or logging.getLogger("model_evaluator")
+        self.logger.debug(f"初始化 ModelEvaluator: model={config.model_name}, batch_size={config.batch_size}, workers={config.workers}")
         
     def evaluate_single(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """评估单个任务"""
         task_id = task.get("_meta", {}).get("task_id", "unknown")
         task_type = task.get("_meta", {}).get("task_type", "unknown")
+        
+        self.logger.debug(f"开始评估任务: {task_id} (类型: {task_type})")
         
         # 构建 prompt
         prompt = self._build_prompt(task)
@@ -62,12 +103,17 @@ class ModelEvaluator:
             response = self.client.generate(prompt)
             latency = time.time() - start_time
             
+            self.logger.debug(f"任务 {task_id} API 调用成功, 延迟: {latency:.2f}s")
+            
             # 评估结果
             evaluator = get_evaluator(task)
             evaluation_result = evaluator.evaluate(
                 prediction=response,
                 ground_truth=task
             )
+            
+            is_correct = evaluation_result.get("correct", False)
+            self.logger.debug(f"任务 {task_id} 评估结果: {'✓' if is_correct else '✗'}")
             
             result = {
                 "task_id": task_id,
@@ -80,6 +126,9 @@ class ModelEvaluator:
                 "success": True
             }
         except Exception as e:
+            latency = time.time() - start_time
+            self.logger.error(f"任务 {task_id} 评估失败: {str(e)}", exc_info=True)
+            
             result = {
                 "task_id": task_id,
                 "task_type": task_type,
@@ -87,7 +136,7 @@ class ModelEvaluator:
                 "prediction": None,
                 "ground_truth": task.get("output", {}),
                 "evaluation": {"correct": False, "error": str(e)},
-                "latency": time.time() - start_time,
+                "latency": latency,
                 "success": False,
                 "error": str(e)
             }
@@ -154,6 +203,10 @@ class ModelEvaluator:
         # 如果文件已存在，清空它们
         if self.results_file.exists():
             self.results_file.write_text("")
+            self.logger.info(f"清空已存在的结果文件: {self.results_file}")
+        
+        self.logger.info(f"结果文件: {self.results_file}")
+        self.logger.info(f"统计文件: {self.stats_file}")
         
         print(f"Results will be saved to: {self.results_file}")
         print(f"Stats will be saved to: {self.stats_file}")
@@ -161,10 +214,15 @@ class ModelEvaluator:
     def _append_results(self, results: List[Dict]):
         """追加结果到文件"""
         if self.results_file:
-            with open(self.results_file, "a", encoding="utf-8") as f:
-                for result in results:
-                    f.write(json.dumps(result, ensure_ascii=False) + "\n")
-                    f.flush()
+            try:
+                with open(self.results_file, "a", encoding="utf-8") as f:
+                    for result in results:
+                        f.write(json.dumps(result, ensure_ascii=False) + "\n")
+                        f.flush()
+                self.logger.debug(f"追加 {len(results)} 条结果到文件")
+            except Exception as e:
+                self.logger.error(f"保存结果到文件失败: {e}", exc_info=True)
+                raise
     
     def _save_intermediate_stats(self, completed_count: int, total_count: int):
         """保存中间统计信息"""
@@ -181,18 +239,38 @@ class ModelEvaluator:
         
         # 保存统计
         if self.stats_file:
-            with open(self.stats_file, "w", encoding="utf-8") as f:
-                json.dump(stats, f, indent=2, ensure_ascii=False)
-                f.flush()
+            try:
+                with open(self.stats_file, "w", encoding="utf-8") as f:
+                    json.dump(stats, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                self.logger.debug(f"保存统计信息: {completed_count}/{total_count} ({stats['progress']['percentage']})")
+            except Exception as e:
+                self.logger.error(f"保存统计信息失败: {e}", exc_info=True)
         
         return stats
     
     def run(self, input_file: str, output_dir: str) -> Dict[str, Any]:
         """运行完整评估流程"""
+        self.logger.info(f"="*50)
+        self.logger.info(f"开始评估流程")
+        self.logger.info(f"输入文件: {input_file}")
+        self.logger.info(f"输出目录: {output_dir}")
+        self.logger.info(f"模型: {self.config.model_name}")
+        self.logger.info(f"Batch size: {self.config.batch_size}, Workers: {self.config.workers}")
+        self.logger.info(f"="*50)
+        
         # 加载测试数据
         print(f"Loading test data from: {input_file}")
-        tasks = load_jsonl(input_file)
-        total_tasks = len(tasks)
+        self.logger.info(f"加载测试数据: {input_file}")
+        
+        try:
+            tasks = load_jsonl(input_file)
+            total_tasks = len(tasks)
+            self.logger.info(f"成功加载 {total_tasks} 个任务")
+        except Exception as e:
+            self.logger.error(f"加载测试数据失败: {e}", exc_info=True)
+            raise
+        
         print(f"Loaded {total_tasks} tasks")
         
         # 初始化输出
@@ -210,6 +288,8 @@ class ModelEvaluator:
         for i in range(0, total_tasks, self.config.batch_size):
             batch_num = i // self.config.batch_size + 1
             batch = tasks[i:i + self.config.batch_size]
+            
+            self.logger.info(f"开始处理 Batch {batch_num}/{total_batches} ({len(batch)} 个任务)")
             
             # 评估当前 batch
             batch_results = self.evaluate_batch(
@@ -229,6 +309,14 @@ class ModelEvaluator:
             stats = self._save_intermediate_stats(completed, total_tasks)
             
             # 打印 batch 完成信息
+            batch_success = sum(1 for r in batch_results if r.get("success", False))
+            batch_correct = sum(1 for r in batch_results if r.get("evaluation", {}).get("correct", False))
+            
+            self.logger.info(f"Batch {batch_num}/{total_batches} 完成: "
+                           f"成功 {batch_success}/{len(batch_results)}, "
+                           f"正确 {batch_correct}/{len(batch_results)}, "
+                           f"准确率 {batch_correct/len(batch_results):.1%}")
+            
             print(f"\n✓ Batch {batch_num}/{total_batches} completed ({len(batch_results)} tasks)")
             print(f"  Progress: {completed}/{total_tasks} ({completed/total_tasks*100:.1f}%)")
             if stats:
@@ -240,6 +328,14 @@ class ModelEvaluator:
         
         # 保存最终结果
         self._save_final_results(all_results, final_stats)
+        
+        self.logger.info(f"="*50)
+        self.logger.info(f"评估流程完成")
+        self.logger.info(f"总任务: {final_stats['total']}")
+        self.logger.info(f"成功率: {final_stats['success_rate']:.1%}")
+        self.logger.info(f"准确率: {final_stats['accuracy']:.1%}")
+        self.logger.info(f"平均延迟: {final_stats['avg_latency']:.2f}s")
+        self.logger.info(f"="*50)
         
         return final_stats
     
@@ -279,15 +375,20 @@ class ModelEvaluator:
     
     def _save_final_results(self, results: List[Dict], stats: Dict):
         """保存最终结果"""
-        if self.stats_file:
-            with open(self.stats_file, "w", encoding="utf-8") as f:
-                json.dump(stats, f, indent=2, ensure_ascii=False)
-        
-        print(f"\nResults saved to: {self.results_file}")
-        print(f"Stats saved to: {self.stats_file}")
-        
-        # 打印摘要
-        self._print_summary(stats)
+        try:
+            if self.stats_file:
+                with open(self.stats_file, "w", encoding="utf-8") as f:
+                    json.dump(stats, f, indent=2, ensure_ascii=False)
+                self.logger.info(f"最终结果已保存到: {self.stats_file}")
+            
+            print(f"\nResults saved to: {self.results_file}")
+            print(f"Stats saved to: {self.stats_file}")
+            
+            # 打印摘要
+            self._print_summary(stats)
+        except Exception as e:
+            self.logger.error(f"保存最终结果失败: {e}", exc_info=True)
+            raise
     
     def _print_summary(self, stats: Dict):
         """打印评估摘要"""
@@ -299,6 +400,11 @@ class ModelEvaluator:
         print(f"Successful: {stats['successful']} ({stats['success_rate']:.1%})")
         print(f"Correct: {stats['correct']} ({stats['accuracy']:.1%})")
         print(f"Avg latency: {stats['avg_latency']:.2f}s")
+        
+        self.logger.info(f"评估摘要 - 模型: {stats['model']}, "
+                        f"总任务: {stats['total']}, "
+                        f"成功率: {stats['success_rate']:.1%}, "
+                        f"准确率: {stats['accuracy']:.1%}")
         
         if stats['by_type']:
             print("\nBy Task Type:")
@@ -393,17 +499,26 @@ def main():
             load_dotenv(workspace_env)
             print(f"Loaded environment from: {workspace_env}")
     
-    # 加载配置
-    config = load_config(args.config)
+    # 设置日志
+    logger = setup_logging("logs")
+    logger.info(f"加载配置: {args.config}")
     
-    # 创建评估配置
-    eval_config = create_eval_config(args, config)
-    
-    # 运行评估
-    evaluator = ModelEvaluator(eval_config)
-    stats = evaluator.run(args.input, args.output)
-    
-    return 0 if stats["accuracy"] > 0 else 1
+    try:
+        # 加载配置
+        config = load_config(args.config)
+        
+        # 创建评估配置
+        eval_config = create_eval_config(args, config)
+        
+        # 运行评估
+        evaluator = ModelEvaluator(eval_config, logger=logger)
+        stats = evaluator.run(args.input, args.output)
+        
+        return 0 if stats["accuracy"] > 0 else 1
+    except Exception as e:
+        logger.error(f"程序执行失败: {e}", exc_info=True)
+        print(f"\nError: {e}")
+        return 1
 
 
 if __name__ == "__main__":

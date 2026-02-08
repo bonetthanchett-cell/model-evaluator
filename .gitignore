@@ -31,7 +31,8 @@ data/
 results/
 *.json
 
-# Logs
+# Log files - 日志文件不上传
+logs/
 *.log
 
 # OS
