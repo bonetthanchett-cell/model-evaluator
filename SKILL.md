@@ -34,13 +34,13 @@ pip install -r requirements.txt
 
 ```bash
 # Evaluate with default settings
-model-eval --input data/test.jsonl --output results/ --model glm-4
+model-eval --input data/test.jsonl --output results/ --model glm-4.7
 
 # Full example with all options
 model-eval \
   --input /path/to/test_data.jsonl \
   --output /path/to/results/ \
-  --model glm-4 \
+  --model glm-4.7 \
   --batch-size 20 \
   --workers 5 \
   --sys-prompt /path/to/prompt.md
@@ -52,7 +52,7 @@ model-eval \
 |--------|-------|-------------|---------|
 | `--input` | `-i` | Input test data (JSONL) | `-i data/test.jsonl` |
 | `--output` | `-o` | Output directory | `-o results/` |
-| `--model` | `-m` | Model name from config | `-m glm-4` |
+| `--model` | `-m` | Model name from config | `-m glm-4.7` |
 | `--config` | `-c` | Config file path | `-c config.yaml` |
 | `--batch-size` | `-b` | Batch size | `-b 20` |
 | `--workers` | `-w` | Concurrent workers | `-w 5` |
@@ -109,17 +109,17 @@ Create a `config.yaml` file:
 
 ```yaml
 # Default model
-default_model: "glm-4"
+default_model: "glm-4.7"
 
 # Model configurations
 models:
-  glm-4:
+  glm-4.7:
     provider: "openai"
     endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-    model: "glm-4"
+    model: "glm-4.7"
     api_key_env: "ZHIPU_API_KEY"
-    max_tokens: 4096
-    temperature: 0.0
+    max_tokens: 8192
+    temperature: 0.5
     
   kimi-k2.5:
     provider: "openai"
@@ -127,17 +127,17 @@ models:
     model: "kimi-k2.5"
     api_key_env: "MOONSHOT_API_KEY"
     max_tokens: 8192
-    temperature: 0.0
+    temperature: 0.5
 
 # Execution settings
 execution:
   batch_size: 10
-  workers: 4
+  workers: 5
   request_interval: 0.1
 
 # Evaluation settings
 evaluation:
-  timeout: 60
+  timeout: 300
   retry:
     max_attempts: 3
     backoff: 2.0
@@ -171,7 +171,7 @@ When solving problems:
 
 Use it with:
 ```bash
-model-eval -i data.jsonl -o results/ -m glm-4 -s system_prompt.md
+model-eval -i data.jsonl -o results/ -m glm-4.7 -s system_prompt.md
 ```
 
 ## Output
@@ -268,7 +268,7 @@ python /path/to/model-evaluator/main.py \
   -i /path/to/data.jsonl \
   -o /path/to/output/ \
   -c /path/to/config.yaml \
-  -m glm-4
+  -m glm-4.7
 
 # Create a global alias
 alias model-eval='python /path/to/model-evaluator/main.py'
@@ -280,7 +280,7 @@ alias model-eval='python /path/to/model-evaluator/main.py'
 #!/bin/bash
 # evaluate_all.sh
 
-MODELS=("glm-4" "kimi-k2.5")
+MODELS=("glm-4.7" "kimi-k2.5")
 DATASETS=("data/gsm8k.jsonl" "data/math500.jsonl")
 
 for model in "${MODELS[@]}"; do
@@ -305,10 +305,10 @@ config = load_config("config.yaml")
 
 # Create eval config
 eval_config = EvalConfig(
-    model_name="glm-4",
-    model_config=config["models"]["glm-4"],
+    model_name="glm-4.7",
+    model_config=config["models"]["glm-4.7"],
     batch_size=10,
-    workers=4,
+    workers=5,
     system_prompt="You are a math expert..."
 )
 
@@ -336,7 +336,7 @@ Error: API key not found in environment: ZHIPU_API_KEY
 ### Model Not Found
 
 ```bash
-Error: Model 'glm-4' not found in config
+Error: Model 'glm-4.7' not found in config
 ```
 
 **Solution**: Verify the model name in your `config.yaml` matches the `--model` argument.
