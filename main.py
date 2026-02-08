@@ -109,6 +109,10 @@ class ModelEvaluator:
         
         # 调用模型
         start_time = time.time()
+        response = ""
+        success = False
+        error_msg = ""
+        
         try:
             # 如果有 system prompt，使用 messages 格式
             if self.config.system_prompt:
@@ -116,12 +120,29 @@ class ModelEvaluator:
                     {"role": "system", "content": self.config.system_prompt},
                     {"role": "user", "content": prompt}
                 ]
-                response = self.client.generate_with_messages(messages)
+                response, success, error_msg = self.client.generate_with_messages(messages)
             else:
-                response = self.client.generate(prompt)
+                response, success, error_msg = self.client.generate(prompt)
             
             latency = time.time() - start_time
             
+            if not success:
+                # API 调用失败（已重试），输出为空，判定为负样例
+                self.logger.error(f"任务 {task_id} API 调用失败: {error_msg}")
+                return {
+                    "task_id": task_id,
+                    "task_type": task_type,
+                    "prompt": prompt,
+                    "system_prompt": self.config.system_prompt,
+                    "prediction": "",  # 输出为空
+                    "ground_truth": task.get("output", {}),
+                    "evaluation": {"correct": False, "error": error_msg},  # 判定为负样例
+                    "latency": latency,
+                    "success": False,
+                    "error": error_msg
+                }
+            
+            # API 调用成功，继续评估
             self.logger.debug(f"任务 {task_id} API 调用成功, 延迟: {latency:.2f}s")
             
             # 评估结果
@@ -138,28 +159,31 @@ class ModelEvaluator:
                 "task_id": task_id,
                 "task_type": task_type,
                 "prompt": prompt,
-                "system_prompt": self.config.system_prompt,  # 记录使用的 system prompt
+                "system_prompt": self.config.system_prompt,
                 "prediction": response,
                 "ground_truth": task.get("output", {}),
                 "evaluation": evaluation_result,
                 "latency": latency,
                 "success": True
             }
+            
         except Exception as e:
+            # 捕获其他未预期的异常
             latency = time.time() - start_time
-            self.logger.error(f"任务 {task_id} 评估失败: {str(e)}", exc_info=True)
+            error_msg = str(e)
+            self.logger.error(f"任务 {task_id} 评估过程中发生异常: {error_msg}", exc_info=True)
             
             result = {
                 "task_id": task_id,
                 "task_type": task_type,
                 "prompt": prompt,
                 "system_prompt": self.config.system_prompt,
-                "prediction": None,
+                "prediction": "",  # 输出为空
                 "ground_truth": task.get("output", {}),
-                "evaluation": {"correct": False, "error": str(e)},
+                "evaluation": {"correct": False, "error": error_msg},  # 判定为负样例
                 "latency": latency,
                 "success": False,
-                "error": str(e)
+                "error": error_msg
             }
         
         return result
