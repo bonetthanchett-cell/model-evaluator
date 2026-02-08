@@ -1,0 +1,54 @@
+# Model Evaluator Configuration
+
+# 默认模型配置
+default_model: "gpt-4"
+
+# 支持的模型端点配置
+models:
+  gpt-4:
+    provider: "openai"
+    endpoint: "https://api.openai.com/v1/chat/completions"
+    model: "gpt-4"
+    api_key_env: "OPENAI_API_KEY"
+    max_tokens: 2048
+    temperature: 0.0
+    
+  gpt-3.5-turbo:
+    provider: "openai"
+    endpoint: "https://api.openai.com/v1/chat/completions"
+    model: "gpt-3.5-turbo"
+    api_key_env: "OPENAI_API_KEY"
+    max_tokens: 2048
+    temperature: 0.0
+    
+  kimi-k2.5:
+    provider: "kimi"
+    endpoint: "https://api.moonshot.cn/v1/chat/completions"
+    model: "kimi-k2.5"
+    api_key_env: "KIMI_API_KEY"
+    max_tokens: 4096
+    temperature: 0.0
+
+# 评估配置
+evaluation:
+  # 默认评估指标
+  default_metric: "exact_match"
+  
+  # 超时设置（秒）
+  timeout: 60
+  
+  # 重试配置
+  retry:
+    max_attempts: 3
+    backoff: 2.0
+
+# 执行配置
+execution:
+  # 批处理大小
+  batch_size: 5
+  
+  # 并发 workers 数
+  workers: 4
+  
+  # 请求间隔（秒）
+  request_interval: 0.1
