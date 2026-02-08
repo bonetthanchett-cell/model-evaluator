@@ -2,6 +2,7 @@
 """
 Model Evaluator - 基于统一格式的大模型能力评估工具
 支持每完成一个 batch 就保存到文件
+支持从任意目录调用
 """
 
 import argparse
@@ -24,8 +25,12 @@ from model_client import ModelClient
 from utils import load_jsonl, save_jsonl, format_result
 
 
+# 全局变量存储程序根目录
+SCRIPT_DIR = Path(__file__).parent.resolve()
+
+
 # 配置日志
-def setup_logging(output_dir: str = "logs") -> logging.Logger:
+def setup_logging(output_dir: str, log_level: int = logging.DEBUG) -> logging.Logger:
     """配置日志记录"""
     log_dir = Path(output_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -34,7 +39,10 @@ def setup_logging(output_dir: str = "logs") -> logging.Logger:
     
     # 创建 logger
     logger = logging.getLogger("model_evaluator")
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(log_level)
+    
+    # 清除已有的处理器（避免重复）
+    logger.handlers.clear()
     
     # 文件处理器 - 记录所有日志
     file_handler = logging.FileHandler(log_file, encoding="utf-8")
@@ -60,7 +68,6 @@ def setup_logging(output_dir: str = "logs") -> logging.Logger:
 
 
 @dataclass
-class EvalConfig:
 class EvalConfig:
     """评估配置类"""
     model_name: str
@@ -194,7 +201,7 @@ class ModelEvaluator:
     
     def _init_output(self, output_dir: str):
         """初始化输出目录和文件"""
-        self.output_path = Path(output_dir)
+        self.output_path = Path(output_dir).resolve()
         self.output_path.mkdir(parents=True, exist_ok=True)
         
         self.results_file = self.output_path / f"results_{self.config.model_name}.jsonl"
@@ -260,11 +267,12 @@ class ModelEvaluator:
         self.logger.info(f"="*50)
         
         # 加载测试数据
-        print(f"Loading test data from: {input_file}")
-        self.logger.info(f"加载测试数据: {input_file}")
+        input_path = Path(input_file).resolve()
+        print(f"Loading test data from: {input_path}")
+        self.logger.info(f"加载测试数据: {input_path}")
         
         try:
-            tasks = load_jsonl(input_file)
+            tasks = load_jsonl(str(input_path))
             total_tasks = len(tasks)
             self.logger.info(f"成功加载 {total_tasks} 个任务")
         except Exception as e:
@@ -414,8 +422,32 @@ class ModelEvaluator:
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """加载 YAML 配置文件"""
-    with open(config_path, "r", encoding="utf-8") as f:
+    config_file = Path(config_path).resolve()
+    if not config_file.exists():
+        raise FileNotFoundError(f"配置文件不存在: {config_path}")
+    
+    with open(config_file, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def find_env_file() -> Optional[Path]:
+    """查找 .env 文件，按优先级搜索"""
+    # 1. 当前工作目录
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.exists():
+        return cwd_env
+    
+    # 2. 脚本所在目录
+    script_env = SCRIPT_DIR / ".env"
+    if script_env.exists():
+        return script_env
+    
+    # 3. workspace/.env
+    workspace_env = Path.home() / ".openclaw/workspace/.env"
+    if workspace_env.exists():
+        return workspace_env
+    
+    return None
 
 
 def create_eval_config(args, config: Dict) -> EvalConfig:
@@ -453,22 +485,22 @@ def create_eval_config(args, config: Dict) -> EvalConfig:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Model Evaluator - 大模型能力评估工具"
+        description="Model Evaluator - 大模型能力评估工具 (支持任意目录调用)"
     )
     parser.add_argument(
         "--input", "-i",
         required=True,
-        help="输入测试数据文件 (JSONL 格式)"
+        help="输入测试数据文件 (JSONL 格式，支持绝对或相对路径)"
     )
     parser.add_argument(
         "--output", "-o",
         required=True,
-        help="输出结果目录"
+        help="输出结果目录 (支持绝对或相对路径)"
     )
     parser.add_argument(
         "--config", "-c",
-        default="config.yaml",
-        help="配置文件路径 (默认: config.yaml)"
+        default=None,
+        help="配置文件路径 (默认: 脚本目录下的 config.yaml)"
     )
     parser.add_argument(
         "--model", "-m",
@@ -484,26 +516,37 @@ def main():
         type=int,
         help="并发 workers 数 (覆盖配置文件)"
     )
+    parser.add_argument(
+        "--log-dir", "-l",
+        default=None,
+        help="日志目录 (默认: 输出目录下的 logs/)"
+    )
     
     args = parser.parse_args()
     
-    # 加载 .env 文件
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
+    # 设置配置文件路径
+    if args.config is None:
+        # 默认使用脚本所在目录的 config.yaml
+        args.config = str(SCRIPT_DIR / "config.yaml")
+    
+    # 加载 .env 文件（按优先级搜索）
+    env_path = find_env_file()
+    if env_path:
         load_dotenv(env_path)
         print(f"Loaded environment from: {env_path}")
     else:
-        # 尝试加载 workspace/.env
-        workspace_env = Path.home() / ".openclaw/workspace/.env"
-        if workspace_env.exists():
-            load_dotenv(workspace_env)
-            print(f"Loaded environment from: {workspace_env}")
+        print("Warning: No .env file found")
     
-    # 设置日志
-    logger = setup_logging("logs")
-    logger.info(f"加载配置: {args.config}")
+    # 设置日志目录
+    log_dir = args.log_dir if args.log_dir else str(Path(args.output) / "logs")
     
     try:
+        # 设置日志
+        logger = setup_logging(log_dir)
+        logger.info(f"脚本目录: {SCRIPT_DIR}")
+        logger.info(f"当前工作目录: {Path.cwd()}")
+        logger.info(f"加载配置: {args.config}")
+        
         # 加载配置
         config = load_config(args.config)
         
@@ -516,7 +559,8 @@ def main():
         
         return 0 if stats["accuracy"] > 0 else 1
     except Exception as e:
-        logger.error(f"程序执行失败: {e}", exc_info=True)
+        if 'logger' in locals():
+            logger.error(f"程序执行失败: {e}", exc_info=True)
         print(f"\nError: {e}")
         return 1
 

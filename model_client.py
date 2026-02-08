@@ -30,6 +30,15 @@ class ModelClient:
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
     
+    def generate_with_messages(self, messages: list, **kwargs) -> str:
+        """使用消息列表生成回复（支持 system message）"""
+        if self.provider in ["openai", "kimi"]:
+            return self._generate_openai_with_messages(messages, **kwargs)
+        elif self.provider == "anthropic":
+            return self._generate_anthropic_with_messages(messages, **kwargs)
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}")
+    
     def _generate_openai_compatible(self, prompt: str, **kwargs) -> str:
         """OpenAI 兼容格式 API 调用"""
         headers = {
@@ -62,6 +71,35 @@ class ModelClient:
             content = message.get("reasoning", "")
         return content
     
+    def _generate_openai_with_messages(self, messages: list, **kwargs) -> str:
+        """OpenAI 兼容格式 - 使用消息列表"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "temperature": kwargs.get("temperature", self.temperature)
+        }
+        
+        response = requests.post(
+            self.endpoint,
+            headers=headers,
+            json=payload,
+            timeout=self.timeout
+        )
+        response.raise_for_status()
+        
+        data = response.json()
+        message = data["choices"][0]["message"]
+        content = message.get("content", "")
+        if not content:
+            content = message.get("reasoning", "")
+        return content
+    
     def _generate_anthropic(self, prompt: str, **kwargs) -> str:
         """Anthropic Claude API 调用"""
         headers = {
@@ -77,6 +115,32 @@ class ModelClient:
             "messages": [
                 {"role": "user", "content": prompt}
             ]
+        }
+        
+        response = requests.post(
+            self.endpoint,
+            headers=headers,
+            json=payload,
+            timeout=self.timeout
+        )
+        response.raise_for_status()
+        
+        data = response.json()
+        return data["content"][0]["text"]
+    
+    def _generate_anthropic_with_messages(self, messages: list, **kwargs) -> str:
+        """Anthropic Claude API - 使用消息列表"""
+        headers = {
+            "x-api-key": self.api_key,
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01"
+        }
+        
+        payload = {
+            "model": self.model,
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "temperature": kwargs.get("temperature", self.temperature),
+            "messages": messages
         }
         
         response = requests.post(

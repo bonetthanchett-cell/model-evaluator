@@ -1,0 +1,42 @@
+# Model Evaluator Configuration - Baseline Evaluation
+
+# 基础模型配置 - 使用本地 Gateway
+default_model: "kimi-k2.5"
+
+# 支持的模型端点配置
+models:
+  kimi-k2.5:
+    provider: "openai"
+    endpoint: "http://localhost:18789/proxy/v1/chat/completions"
+    model: "kimi-coding/k2p5"
+    api_key_env: "OPENCLAW_GATEWAY_TOKEN"
+    max_tokens: 4096
+    temperature: 0.0
+    
+  glm-4.7:
+    provider: "openai"
+    endpoint: "http://localhost:18789/proxy/v1/chat/completions"
+    model: "glm-4.7"
+    api_key_env: "OPENCLAW_GATEWAY_TOKEN"
+    max_tokens: 4096
+    temperature: 0.0
+
+# 基础 Prompt 配置 (Baseline)
+prompts:
+  baseline:
+    system: "You are a helpful assistant. Please answer the following question directly and concisely."
+    user_template: "{question}"
+
+# 评估配置
+evaluation:
+  default_metric: "exact_match"
+  timeout: 300
+  retry:
+    max_attempts: 2
+    backoff: 1.0
+
+# 执行配置
+execution:
+  batch_size: 10
+  workers: 10
+  request_interval: 0.05
