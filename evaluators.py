@@ -20,10 +20,14 @@ class ExactMatchEvaluator(BaseEvaluator):
     """精确匹配评估器"""
     
     def evaluate(self, prediction: str, ground_truth: Dict[str, Any]) -> Dict[str, Any]:
+        # 处理 None 或空字符串
+        if prediction is None:
+            prediction = ""
+        
         expected = ground_truth.get("output", {}).get("answer", "")
         
         # 标准化：去除多余空白
-        pred_norm = " ".join(prediction.strip().split())
+        pred_norm = " ".join(str(prediction).strip().split())
         expected_norm = " ".join(str(expected).strip().split())
         
         correct = pred_norm.lower() == expected_norm.lower()
@@ -40,6 +44,10 @@ class NumberMatchEvaluator(BaseEvaluator):
     """数字匹配评估器（从文本中提取数字比较）"""
     
     def evaluate(self, prediction: str, ground_truth: Dict[str, Any]) -> Dict[str, Any]:
+        # 处理 None 或空字符串
+        if prediction is None:
+            prediction = ""
+        
         expected = ground_truth.get("output", {}).get("answer", "")
         
         # 从预测中提取数字
@@ -64,6 +72,8 @@ class NumberMatchEvaluator(BaseEvaluator):
     
     def _extract_numbers(self, text: str) -> list:
         """从文本中提取所有数字"""
+        if not text:
+            return []
         # 支持整数、小数、负数
         pattern = r'-?\d+\.?\d*'
         matches = re.findall(pattern, text)
@@ -71,6 +81,8 @@ class NumberMatchEvaluator(BaseEvaluator):
     
     def _extract_single_number(self, text: str) -> Optional[float]:
         """从文本中提取单个数字"""
+        if not text:
+            return None
         numbers = self._extract_numbers(text)
         return numbers[0] if numbers else None
 
@@ -79,9 +91,22 @@ class ContainsMatchEvaluator(BaseEvaluator):
     """包含匹配评估器（预测包含正确答案）"""
     
     def evaluate(self, prediction: str, ground_truth: Dict[str, Any]) -> Dict[str, Any]:
+        # 处理 None 或空字符串
+        if prediction is None:
+            prediction = ""
+        
         expected = str(ground_truth.get("output", {}).get("answer", ""))
         
-        correct = expected.lower() in prediction.lower()
+        # 处理空值情况
+        if not expected:
+            return {
+                "correct": False,
+                "metric": "contains_match",
+                "expected": expected,
+                "predicted": prediction
+            }
+        
+        correct = expected.lower() in str(prediction).lower()
         
         return {
             "correct": correct,
@@ -95,6 +120,10 @@ class CodeExecutionEvaluator(BaseEvaluator):
     """代码执行评估器（检查代码是否通过测试用例）"""
     
     def evaluate(self, prediction: str, ground_truth: Dict[str, Any]) -> Dict[str, Any]:
+        # 处理 None 或空字符串
+        if prediction is None:
+            prediction = ""
+            
         tests = ground_truth.get("output", {}).get("tests", [])
         
         # 这里简化处理，实际应该执行代码

@@ -207,6 +207,7 @@ class ModelEvaluator:
                        progress_desc: str = "Evaluating") -> List[Dict[str, Any]]:
         """批量评估任务"""
         results = []
+        failed_count = 0
         
         with ThreadPoolExecutor(max_workers=self.config.workers) as executor:
             # 提交所有任务
@@ -218,22 +219,46 @@ class ModelEvaluator:
             # 收集结果
             with tqdm(total=len(tasks), desc=progress_desc) as pbar:
                 for future in as_completed(future_to_task):
+                    task = future_to_task[future]
+                    task_id = task.get("_meta", {}).get("task_id", "unknown")
+                    
                     try:
-                        result = future.result()
+                        result = future.result(timeout=self.config.timeout + 30)  # 添加额外超时缓冲
                         results.append(result)
+                        
+                        # 记录失败但继续处理
+                        if not result.get("success", False):
+                            failed_count += 1
+                            self.logger.warning(f"任务 {task_id} 处理失败，但已记录结果，继续执行")
+                            
                     except Exception as e:
-                        task = future_to_task[future]
-                        task_id = task.get("_meta", {}).get("task_id", "unknown")
+                        # 捕获所有异常，确保单个任务失败不影响整体流程
+                        failed_count += 1
+                        self.logger.error(f"任务 {task_id} 执行异常: {str(e)}", exc_info=True)
+                        
+                        # 创建失败结果记录
                         results.append({
                             "task_id": task_id,
-                            "error": str(e),
-                            "success": False
+                            "task_type": task.get("_meta", {}).get("task_type", "unknown"),
+                            "prompt": "",
+                            "system_prompt": self.config.system_prompt,
+                            "prediction": "",
+                            "ground_truth": task.get("output", {}),
+                            "evaluation": {"correct": False, "error": f"Execution exception: {str(e)}"},
+                            "latency": 0,
+                            "success": False,
+                            "error": str(e)
                         })
+                    
                     pbar.update(1)
                     
                     # 请求间隔控制
                     if self.config.request_interval > 0:
                         time.sleep(self.config.request_interval)
+        
+        # 记录批量处理摘要
+        if failed_count > 0:
+            self.logger.warning(f"批量处理完成: {len(results) - failed_count}/{len(results)} 成功, {failed_count} 失败")
         
         return results
     
@@ -330,6 +355,7 @@ class ModelEvaluator:
         
         total_batches = (total_tasks - 1) // self.config.batch_size + 1
         all_results = []
+        failed_batches = 0
         
         for i in range(0, total_tasks, self.config.batch_size):
             batch_num = i // self.config.batch_size + 1
@@ -337,37 +363,77 @@ class ModelEvaluator:
             
             self.logger.info(f"开始处理 Batch {batch_num}/{total_batches} ({len(batch)} 个任务)")
             
-            # 评估当前 batch
-            batch_results = self.evaluate_batch(
-                batch, 
-                progress_desc=f"Batch {batch_num}/{total_batches}"
-            )
-            
-            # 保存到内存
-            all_results.extend(batch_results)
-            self.results = all_results  # 更新用于统计
-            
-            # 立即追加到文件
-            self._append_results(batch_results)
-            
-            # 保存中间统计
-            completed = min(i + len(batch), total_tasks)
-            stats = self._save_intermediate_stats(completed, total_tasks)
-            
-            # 打印 batch 完成信息
-            batch_success = sum(1 for r in batch_results if r.get("success", False))
-            batch_correct = sum(1 for r in batch_results if r.get("evaluation", {}).get("correct", False))
-            
-            self.logger.info(f"Batch {batch_num}/{total_batches} 完成: "
-                           f"成功 {batch_success}/{len(batch_results)}, "
-                           f"正确 {batch_correct}/{len(batch_results)}, "
-                           f"准确率 {batch_correct/len(batch_results):.1%}")
-            
-            print(f"\n✓ Batch {batch_num}/{total_batches} completed ({len(batch_results)} tasks)")
-            print(f"  Progress: {completed}/{total_tasks} ({completed/total_tasks*100:.1f}%)")
-            if stats:
-                print(f"  Current accuracy: {stats['accuracy']:.1%}")
-            print("-" * 50)
+            try:
+                # 评估当前 batch
+                batch_results = self.evaluate_batch(
+                    batch, 
+                    progress_desc=f"Batch {batch_num}/{total_batches}"
+                )
+                
+                # 保存到内存
+                all_results.extend(batch_results)
+                self.results = all_results  # 更新用于统计
+                
+                # 立即追加到文件
+                self._append_results(batch_results)
+                
+                # 保存中间统计
+                completed = min(i + len(batch), total_tasks)
+                stats = self._save_intermediate_stats(completed, total_tasks)
+                
+                # 打印 batch 完成信息
+                batch_success = sum(1 for r in batch_results if r.get("success", False))
+                batch_correct = sum(1 for r in batch_results if r.get("evaluation", {}).get("correct", False))
+                
+                self.logger.info(f"Batch {batch_num}/{total_batches} 完成: "
+                               f"成功 {batch_success}/{len(batch_results)}, "
+                               f"正确 {batch_correct}/{len(batch_results)}, "
+                               f"准确率 {batch_correct/len(batch_results):.1%}")
+                
+                print(f"\n✓ Batch {batch_num}/{total_batches} completed ({len(batch_results)} tasks)")
+                print(f"  Progress: {completed}/{total_tasks} ({completed/total_tasks*100:.1f}%)")
+                if stats:
+                    print(f"  Current accuracy: {stats['accuracy']:.1%}")
+                print("-" * 50)
+                
+            except Exception as e:
+                # 捕获 batch 级别的异常，记录并继续下一个 batch
+                failed_batches += 1
+                self.logger.error(f"Batch {batch_num}/{total_batches} 处理失败: {str(e)}", exc_info=True)
+                print(f"\n⚠ Batch {batch_num}/{total_batches} failed: {str(e)}")
+                print(f"  继续处理下一个 batch...")
+                print("-" * 50)
+                
+                # 为失败的 batch 创建失败记录
+                for task in batch:
+                    task_id = task.get("_meta", {}).get("task_id", "unknown")
+                    failed_result = {
+                        "task_id": task_id,
+                        "task_type": task.get("_meta", {}).get("task_type", "unknown"),
+                        "prompt": "",
+                        "system_prompt": self.config.system_prompt,
+                        "prediction": "",
+                        "ground_truth": task.get("output", {}),
+                        "evaluation": {"correct": False, "error": f"Batch processing failed: {str(e)}"},
+                        "latency": 0,
+                        "success": False,
+                        "error": str(e)
+                    }
+                    all_results.append(failed_result)
+                    self.results = all_results
+                
+                # 仍然尝试保存当前进度
+                try:
+                    completed = min(i + len(batch), total_tasks)
+                    self._save_intermediate_stats(completed, total_tasks)
+                except Exception as save_error:
+                    self.logger.error(f"保存中间统计失败: {save_error}")
+                
+                continue  # 继续下一个 batch
+        
+        # 记录总体执行情况
+        if failed_batches > 0:
+            self.logger.warning(f"评估完成，但有 {failed_batches}/{total_batches} 个 batch 处理失败")
         
         # 计算最终统计
         final_stats = self._compute_stats(all_results)
