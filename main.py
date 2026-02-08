@@ -79,6 +79,7 @@ class EvalConfig:
     retry_backoff: float = 2.0
     output_dir: str = "results"
     request_interval: float = 0.1
+    system_prompt: Optional[str] = None  # 添加 system prompt 支持
 
 
 class ModelEvaluator:
@@ -93,6 +94,8 @@ class ModelEvaluator:
         self.stats_file: Optional[Path] = None
         self.logger = logger or logging.getLogger("model_evaluator")
         self.logger.debug(f"初始化 ModelEvaluator: model={config.model_name}, batch_size={config.batch_size}, workers={config.workers}")
+        if config.system_prompt:
+            self.logger.info(f"使用 System Prompt (长度: {len(config.system_prompt)} 字符)")
         
     def evaluate_single(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """评估单个任务"""
@@ -107,7 +110,16 @@ class ModelEvaluator:
         # 调用模型
         start_time = time.time()
         try:
-            response = self.client.generate(prompt)
+            # 如果有 system prompt，使用 messages 格式
+            if self.config.system_prompt:
+                messages = [
+                    {"role": "system", "content": self.config.system_prompt},
+                    {"role": "user", "content": prompt}
+                ]
+                response = self.client.generate_with_messages(messages)
+            else:
+                response = self.client.generate(prompt)
+            
             latency = time.time() - start_time
             
             self.logger.debug(f"任务 {task_id} API 调用成功, 延迟: {latency:.2f}s")
@@ -126,6 +138,7 @@ class ModelEvaluator:
                 "task_id": task_id,
                 "task_type": task_type,
                 "prompt": prompt,
+                "system_prompt": self.config.system_prompt,  # 记录使用的 system prompt
                 "prediction": response,
                 "ground_truth": task.get("output", {}),
                 "evaluation": evaluation_result,
@@ -140,6 +153,7 @@ class ModelEvaluator:
                 "task_id": task_id,
                 "task_type": task_type,
                 "prompt": prompt,
+                "system_prompt": self.config.system_prompt,
                 "prediction": None,
                 "ground_truth": task.get("output", {}),
                 "evaluation": {"correct": False, "error": str(e)},
@@ -470,6 +484,21 @@ def create_eval_config(args, config: Dict) -> EvalConfig:
     exec_config = config.get("execution", {})
     eval_config = config.get("evaluation", {})
     
+    # 读取 system prompt（如果指定了文件）
+    system_prompt = None
+    if args.sys_prompt:
+        sys_prompt_path = Path(args.sys_prompt).resolve()
+        if not sys_prompt_path.exists():
+            raise FileNotFoundError(f"System prompt 文件不存在: {args.sys_prompt}")
+        
+        # 支持 .md 和 .txt 文件
+        if sys_prompt_path.suffix.lower() in ['.md', '.txt', '']:
+            with open(sys_prompt_path, 'r', encoding='utf-8') as f:
+                system_prompt = f.read().strip()
+            print(f"已加载 System Prompt: {sys_prompt_path} ({len(system_prompt)} 字符)")
+        else:
+            raise ValueError(f"不支持的文件格式: {sys_prompt_path.suffix}，请使用 .md 或 .txt")
+    
     return EvalConfig(
         model_name=model_name,
         model_config=model_config,
@@ -479,7 +508,8 @@ def create_eval_config(args, config: Dict) -> EvalConfig:
         retry_max=eval_config.get("retry", {}).get("max_attempts", 3),
         retry_backoff=eval_config.get("retry", {}).get("backoff", 2.0),
         output_dir=args.output,
-        request_interval=exec_config.get("request_interval", 0.1)
+        request_interval=exec_config.get("request_interval", 0.1),
+        system_prompt=system_prompt
     )
 
 
@@ -520,6 +550,11 @@ def main():
         "--log-dir", "-l",
         default=None,
         help="日志目录 (默认: 输出目录下的 logs/)"
+    )
+    parser.add_argument(
+        "--sys-prompt", "-s",
+        default=None,
+        help="System Prompt 文件路径 (.md 或 .txt)，将作为 system message 传递给大模型"
     )
     
     args = parser.parse_args()

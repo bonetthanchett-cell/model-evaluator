@@ -106,6 +106,7 @@ KIMI_CODING_API_KEY=your-key-here
 | `--batch-size` | `-b` | 批处理大小 | `--batch-size 20` |
 | `--workers` | `-w` | 并发 workers 数 | `--workers 5` |
 | `--log-dir` | `-l` | 日志目录 (可选，默认输出目录下的 logs/) | `--log-dir /var/log/eval/` |
+| `--sys-prompt` | `-s` | System Prompt 文件路径 (.md/.txt) | `--sys-prompt ./prompt.md` |
 
 ## 输入数据格式
 
@@ -161,7 +162,18 @@ python /home/user/projects/model-evaluator/main.py \
     -w 5
 ```
 
-### 使用自定义配置
+### 使用 System Prompt
+```bash
+# 创建 system prompt 文件
+echo "你是一个数学专家，请仔细思考后回答。" > system_prompt.md
+
+# 运行评估时传入
+python main.py \
+    -i data/test_100.jsonl \
+    -o results/ \
+    -m glm-4.7 \
+    -s system_prompt.md
+```
 ```bash
 python main.py \
     -i ./test.jsonl \
