@@ -27,6 +27,10 @@ ENV/
 data/
 *.jsonl
 
+# Allow testdata directory for testing
+!testdata/
+!testdata/*.jsonl
+
 # Output files - 评估结果不上传
 results/
 *.json
