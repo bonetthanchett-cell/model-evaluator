@@ -80,6 +80,7 @@ class EvalConfig:
     output_dir: str = "results"
     request_interval: float = 0.1
     system_prompt: Optional[str] = None  # 添加 system prompt 支持
+    llm_judge_config: Optional[Dict[str, Any]] = None  # 添加 LLM Judge 配置支持
 
 
 class ModelEvaluator:
@@ -146,7 +147,7 @@ class ModelEvaluator:
             self.logger.debug(f"任务 {task_id} API 调用成功, 延迟: {latency:.2f}s")
             
             # 评估结果
-            evaluator = get_evaluator(task)
+            evaluator = get_evaluator(task, self.config.llm_judge_config)
             evaluation_result = evaluator.evaluate(
                 prediction=response,
                 ground_truth=task
@@ -599,7 +600,8 @@ def create_eval_config(args, config: Dict) -> EvalConfig:
         retry_backoff=eval_config.get("retry", {}).get("backoff", 2.0),
         output_dir=args.output,
         request_interval=exec_config.get("request_interval", 0.1),
-        system_prompt=system_prompt
+        system_prompt=system_prompt,
+        llm_judge_config=config.get("llm_judge")
     )
 
 

@@ -1,41 +1,72 @@
 # Model Evaluator Configuration
 
 # 默认模型配置
-default_model: "gpt-4"
+default_model: "kimi-k2.5"
 
 # 支持的模型端点配置
 models:
-  gpt-4:
-    provider: "openai"
-    endpoint: "https://api.openai.com/v1/chat/completions"
-    model: "gpt-4"
-    api_key_env: "OPENAI_API_KEY"
-    max_tokens: 2048
-    temperature: 0.0
-    
-  gpt-3.5-turbo:
-    provider: "openai"
-    endpoint: "https://api.openai.com/v1/chat/completions"
-    model: "gpt-3.5-turbo"
-    api_key_env: "OPENAI_API_KEY"
-    max_tokens: 2048
-    temperature: 0.0
-    
   kimi-k2.5:
-    provider: "kimi"
+    provider: "openai"
     endpoint: "https://api.moonshot.cn/v1/chat/completions"
     model: "kimi-k2.5"
-    api_key_env: "KIMI_API_KEY"
-    max_tokens: 4096
-    temperature: 0.0
+    api_key_env: "MOONSHOT_API_KEY"
+    max_tokens: 8192
+    temperature: 0.5
+    
+  glm-4.7:
+    provider: "openai"
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    model: "glm-4.7"
+    api_key_env: "ZHIPU_API_KEY"
+    max_tokens: 8192
+    temperature: 0.5
+    
+  kimi-coding:
+    provider: "openai"
+    endpoint: "https://api.kimi.com/coding/v1/messages"
+    model: "kimi-coding/k2p5"
+    api_key_env: "KIMI_CODING_API_KEY"
+    max_tokens: 8192
+    temperature: 0.5
+
+# LLM Judge 配置
+# 用于 llm_judge 评估指标，通过大模型判断答案是否一致
+llm_judge:
+  # 使用的模型端点
+  endpoint: "https://api.moonshot.cn/v1/chat/completions"
+  # 模型名称
+  model: "kimi-k2.5"
+  # API Key 环境变量名
+  api_key_env: "MOONSHOT_API_KEY"
+  # 最大 token 数
+  max_tokens: 1024
+  # 温度
+  temperature: 0.0
+  # 超时时间（秒）
+  timeout: 30
+  # System Prompt
+  system_prompt: |
+    You are an evaluator. Your task is to determine if the predicted answer matches the expected answer semantically.
+    Consider the meaning and correctness, not just exact text matching.
+    Respond with only 'yes' if they match, or 'no' if they don't match.
+    Do not provide any explanation, only output 'yes' or 'no'.
+  # User Prompt 模板
+  # 可用变量: {prediction} - 预测答案, {ground_truth} - 期望答案
+  user_template: |
+    # Prediction
+    {prediction}
+
+    # Expected Answer
+    {ground_truth}
 
 # 评估配置
 evaluation:
   # 默认评估指标
+  # 可选: exact_match, number_match, contains, llm_judge, code_execution
   default_metric: "exact_match"
   
   # 超时设置（秒）
-  timeout: 60
+  timeout: 300
   
   # 重试配置
   retry:
@@ -45,10 +76,10 @@ evaluation:
 # 执行配置
 execution:
   # 批处理大小
-  batch_size: 5
+  batch_size: 10
   
   # 并发 workers 数
-  workers: 4
+  workers: 5
   
   # 请求间隔（秒）
   request_interval: 0.1

@@ -100,8 +100,27 @@ The evaluator expects data in **Unified Format** (JSONL):
 - `code_gen` - Code generation
 - `code_repair` - Code repair/debugging
 - `reading_comp` - Reading comprehension
-- `logical_reason`` - Logical reasoning
+- `logical_reason` - Logical reasoning
 - `open_qa` - Open-domain QA
+
+### Supported Evaluation Metrics
+
+- `exact_match` - String exact match (default)
+- `number_match` - Extract and compare numbers
+- `contains` - Check if expected is contained in prediction
+- `llm_judge` - Use LLM to judge semantic equivalence
+- `code_execution` - Execute code and check output (not implemented)
+
+To specify the metric, set it in the evaluation section of your test data:
+
+```json
+{
+  "evaluation": {
+    "metric": "llm_judge",
+    "ground_truth": "expected answer"
+  }
+}
+```
 
 ## Configuration
 
@@ -141,7 +160,46 @@ evaluation:
   retry:
     max_attempts: 3
     backoff: 2.0
+
+# LLM Judge configuration
+# Use LLM as a judge to evaluate answer correctness
+llm_judge:
+  endpoint: "https://api.moonshot.cn/v1/chat/completions"
+  model: "kimi-k2.5"
+  api_key_env: "MOONSHOT_API_KEY"
+  max_tokens: 1024
+  temperature: 0.0
+  timeout: 30
+  system_prompt: |
+    You are an evaluator. Determine if the predicted answer matches the expected answer.
+    Respond with only 'yes' if they match, or 'no' if they don't match.
+  user_template: |
+    # Prediction
+    {prediction}
+
+    # Expected Answer
+    {ground_truth}
 ```
+
+### Using LLM Judge
+
+To use the LLM Judge evaluator, set the metric to `llm_judge` in your test data:
+
+```json
+{
+  "evaluation": {
+    "metric": "llm_judge",
+    "ground_truth": "expected answer"
+  }
+}
+```
+
+The LLM Judge will:
+1. Send both the prediction and expected answer to the configured LLM (default: kimi-k2.5)
+2. The LLM returns 'yes' or 'no' based on semantic similarity
+3. The evaluator marks the prediction as correct if the LLM responds with 'yes'
+
+This is useful for evaluating open-ended questions where exact match is too strict.
 
 ### Environment Variables
 
